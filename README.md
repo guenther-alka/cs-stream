@@ -1,8 +1,6 @@
 # cs-stream
 Signed-off-by: Guenther Alka gea@napp-it.org
-
 Concept Co-Authored-By: Claude Fable 5 noreply@anthropic.com
-
 
 Encrypted TCP stream transport for ZFS replication. Replaces ssh, mbuffer, netcat (nc) and pv in ZFS send/receive pipelines.
 
