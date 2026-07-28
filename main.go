@@ -73,7 +73,7 @@ import (
 )
 
 // version is set via -ldflags "-X main.version=..." at build time
-var version = "2.0.0"
+var version = "2.1.0"
 
 const (
 	chunkSize      = 65536 // 64 KB plaintext per chunk
@@ -83,7 +83,20 @@ const (
 	defaultBufSize = 128 * 1024 * 1024    // 128 MB
 	localReadyWait = 30 * time.Second     // how long to wait for child to bind --local
 	childExitWait  = 10 * time.Second     // how long to wait for child after tunnel closes
+
+	// maxTunnelSessions caps concurrent tunnel-listen sessions (audit
+	// finding 2026.07.28): defense in depth alongside the --allow-ip
+	// check, bounding resource use (goroutines, local dials, file
+	// descriptors) even from the allow-listed IP. Generous relative to
+	// the documented rclone-over-SFTP use case (a handful of concurrent
+	// file transfers plus a few metadata/listing connections).
+	maxTunnelSessions = 64
 )
+
+// activeTunnelSessions is the current concurrent tunnel-listen session
+// count. Package-level: tunnel-listen only ever runs one such loop per
+// process (see currentGCM's doc comment for the same reasoning).
+var activeTunnelSessions int64
 
 // options holds parsed CLI flags
 type options struct {
@@ -93,6 +106,7 @@ type options struct {
 	logFile  string
 	bind     string // listen bind address, default 0.0.0.0
 	local    string // tunnel-listen/tunnel-send: local address for child process
+	allowIP  string // listen/tunnel-listen: only this source IP may connect (required)
 }
 
 // parseSize parses "128m", "1g", "512k", or plain bytes
@@ -148,6 +162,8 @@ func parseFlags(args []string) ([]string, options, error) {
 			opts.bind = strings.TrimPrefix(a, "--bind=")
 		case strings.HasPrefix(a, "--local="):
 			opts.local = strings.TrimPrefix(a, "--local=")
+		case strings.HasPrefix(a, "--allow-ip="):
+			opts.allowIP = strings.TrimPrefix(a, "--allow-ip=")
 		default:
 			pos = append(pos, a)
 		}
@@ -331,11 +347,14 @@ func main() {
 			fatalf("%v", err)
 		}
 		if len(pos) != 2 {
-			fmt.Fprintf(os.Stderr, "usage: cs-stream listen <port> <key> [options]\n")
+			fmt.Fprintf(os.Stderr, "usage: cs-stream listen <port> <key> --allow-ip=IP [options]\n")
 			os.Exit(1)
 		}
 		if len(pos[1]) < 8 {
 			fatalf("key too short (min 8 chars) -- empty or weak key rejected")
+		}
+		if opts.allowIP == "" {
+			fatalf("--allow-ip=IP is required (only that source IP may connect) -- security audit 2026.07.28: an unauthenticated LAN host must not be able to occupy the single accept slot or attempt a handshake")
 		}
 		doListen(pos[0], pos[1], opts)
 	case "send":
@@ -358,7 +377,7 @@ func main() {
 			fatalf("%v", err)
 		}
 		if len(pos) != 2 {
-			fmt.Fprintf(os.Stderr, "usage: cs-stream tunnel-listen <port> <key> --local=ADDR [options] -- <cmd> [args...]\n")
+			fmt.Fprintf(os.Stderr, "usage: cs-stream tunnel-listen <port> <key> --local=ADDR --allow-ip=IP [options] -- <cmd> [args...]\n")
 			os.Exit(1)
 		}
 		if len(pos[1]) < 8 {
@@ -366,6 +385,9 @@ func main() {
 		}
 		if opts.local == "" {
 			fatalf("tunnel-listen requires --local=ADDR (local address the child process binds to)")
+		}
+		if opts.allowIP == "" {
+			fatalf("--allow-ip=IP is required (only that source IP may connect) -- security audit 2026.07.28: an unauthenticated LAN host must not be able to open sessions against the wrapped child process")
 		}
 		if len(childArgs) == 0 {
 			fatalf("tunnel-listen requires a child command after --")
@@ -402,25 +424,26 @@ func main() {
 func usage() {
 	fmt.Fprintf(os.Stderr, "cs-stream %s -- encrypted TCP stream transport for ZFS replication\n\n", version)
 	fmt.Fprintf(os.Stderr, "Usage:\n")
-	fmt.Fprintf(os.Stderr, "  cs-stream listen <port> <key> [options]          listen and decrypt to stdout\n")
+	fmt.Fprintf(os.Stderr, "  cs-stream listen <port> <key> --allow-ip=IP [options]          listen and decrypt to stdout\n")
 	fmt.Fprintf(os.Stderr, "  cs-stream send   <host> <port> <key> [options]   encrypt stdin and send\n")
-	fmt.Fprintf(os.Stderr, "  cs-stream tunnel-listen <port> <key> --local=ADDR -- <cmd>   spawn cmd, proxy to ADDR\n")
+	fmt.Fprintf(os.Stderr, "  cs-stream tunnel-listen <port> <key> --local=ADDR --allow-ip=IP -- <cmd>   spawn cmd, proxy to ADDR\n")
 	fmt.Fprintf(os.Stderr, "  cs-stream tunnel-send <host> <port> <key> --local=ADDR -- <cmd>   spawn cmd, proxy from ADDR\n")
 	fmt.Fprintf(os.Stderr, "  cs-stream version                                print version\n\n")
 	fmt.Fprintf(os.Stderr, "Options:\n")
 	fmt.Fprintf(os.Stderr, "  --buf=SIZE      read-ahead buffer (default 128m, 0=off)  e.g. --buf=256m\n")
-	fmt.Fprintf(os.Stderr, "  --rate=SPEED    throughput limit (default off)           e.g. --rate=50m\n")
-	fmt.Fprintf(os.Stderr, "  --progress      show live progress on stderr\n")
+	fmt.Fprintf(os.Stderr, "  --rate=SPEED    throughput limit (default off)           e.g. --rate=50m (not supported in tunnel mode)\n")
+	fmt.Fprintf(os.Stderr, "  --progress      show live progress on stderr (not supported in tunnel mode)\n")
 	fmt.Fprintf(os.Stderr, "  --log=FILE      append transfer summary to FILE\n")
 	fmt.Fprintf(os.Stderr, "  --bind=IP       bind listener to IP (default 0.0.0.0)\n")
-	fmt.Fprintf(os.Stderr, "  --local=ADDR    tunnel mode: local address for the wrapped child process\n\n")
+	fmt.Fprintf(os.Stderr, "  --local=ADDR    tunnel mode: local address for the wrapped child process\n")
+	fmt.Fprintf(os.Stderr, "  --allow-ip=IP   listen/tunnel-listen: REQUIRED, only this source IP may connect\n\n")
 	fmt.Fprintf(os.Stderr, "Example:\n")
 	fmt.Fprintf(os.Stderr, "  # Receiver:\n")
-	fmt.Fprintf(os.Stderr, "  cs-stream listen 9000 MYKEY | zfs receive -F tank/backup\n\n")
+	fmt.Fprintf(os.Stderr, "  cs-stream listen 9000 MYKEY --allow-ip=192.168.1.20 | zfs receive -F tank/backup\n\n")
 	fmt.Fprintf(os.Stderr, "  # Sender (rate-limited, with log):\n")
 	fmt.Fprintf(os.Stderr, "  zfs send tank@snap | cs-stream send 192.168.1.10 9000 MYKEY --rate=100m --log=/tmp/cs-stream.log\n\n")
 	fmt.Fprintf(os.Stderr, "  # Tunnel (rclone-over-sftp folder sync):\n")
-	fmt.Fprintf(os.Stderr, "  cs-stream tunnel-listen 9100 MYKEY --local=127.0.0.1:9101 -- rclone serve sftp /data --addr 127.0.0.1:9101\n")
+	fmt.Fprintf(os.Stderr, "  cs-stream tunnel-listen 9100 MYKEY --local=127.0.0.1:9101 --allow-ip=192.168.1.10 -- rclone serve sftp /data --addr 127.0.0.1:9101\n")
 	fmt.Fprintf(os.Stderr, "  cs-stream tunnel-send HOST 9100 MYKEY --local=127.0.0.1:9101 -- rclone sync /src :sftp: --sftp-host=127.0.0.1 --sftp-port=9101\n")
 }
 
@@ -457,11 +480,39 @@ func doListen(port, keystr string, opts options) {
 		return fmtBytes(opts.bufSize)
 	}())
 
-	// Accept timeout: don't wait forever for a sender
+	// Accept timeout: don't wait forever for a sender. Set once, covers
+	// every accept attempt in the loop below (Go's net package applies a
+	// listener deadline to every subsequent Accept() call until changed).
 	ln.(*net.TCPListener).SetDeadline(time.Now().Add(acceptTimeout))
-	conn, err := ln.Accept()
-	if err != nil {
-		fatalf("accept (timeout %s): %v", acceptTimeout, err)
+
+	// SECURITY FIX 2026.07.28 (audit finding): previously accepted the
+	// FIRST incoming connection unconditionally, from ANY source -- an
+	// unauthenticated host reaching this port could occupy the single
+	// accept slot before the real sender connects, blocking the transfer
+	// (a plain availability/DoS issue; AES-256-GCM already prevented any
+	// actual data read/write without the key, so this was never a
+	// confidentiality/integrity gap, only availability). cs-sync's
+	// sibling `serve` command has required --allow-ip since v2.1.0 for
+	// exactly this reason; cs-stream now matches that convention.
+	// Looping here (instead of a single Accept) means a wrong-IP
+	// connection is rejected and closed immediately, and the ORIGINAL
+	// deadline set above keeps counting down across every attempt -- so
+	// an attacker connecting repeatedly cannot extend the window, and the
+	// real sender still gets the full acceptTimeout to show up.
+	var conn net.Conn
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			fatalf("accept (timeout %s): %v", acceptTimeout, err)
+		}
+		host, _, splitErr := net.SplitHostPort(c.RemoteAddr().String())
+		if splitErr != nil || host != opts.allowIP {
+			logf("REFUSING connection from %s: not the allow-listed IP (%s)", c.RemoteAddr(), opts.allowIP)
+			c.Close()
+			continue
+		}
+		conn = c
+		break
 	}
 	defer conn.Close()
 	ln.Close()
@@ -796,6 +847,10 @@ func doTunnelListen(port, keystr string, opts options, childArgs []string) {
 	var wg sync.WaitGroup
 	sessionN := 0
 
+	if opts.rateHz > 0 || opts.progress {
+		logf("WARNING: --rate and --progress are not supported in tunnel mode and will be ignored")
+	}
+
 	for {
 		tunnelConn, aerr := acceptRace(ln, childDone, childErr, acceptTimeout)
 		if aerr != nil {
@@ -824,6 +879,31 @@ func doTunnelListen(port, keystr string, opts options, childArgs []string) {
 			}
 			break
 		}
+
+		// SECURITY FIX 2026.07.28 (audit finding): same allow-ip
+		// requirement as doListen, applied per-connection since this is a
+		// persistent multi-session accept loop -- previously an
+		// unauthenticated host could open unlimited sessions here, each
+		// spawning a goroutine + a local dial into the wrapped child
+		// process, for the lifetime of the tunnel-listen process.
+		host, _, splitErr := net.SplitHostPort(tunnelConn.RemoteAddr().String())
+		if splitErr != nil || host != opts.allowIP {
+			logf("REFUSING tunnel connection from %s: not the allow-listed IP (%s)", tunnelConn.RemoteAddr(), opts.allowIP)
+			tunnelConn.Close()
+			continue
+		}
+
+		// ROBUSTNESS FIX 2026.07.28 (audit finding): cap concurrent
+		// sessions -- defense in depth alongside the allow-ip check above
+		// (bounds resource use even from the allow-listed IP, e.g. a
+		// misbehaving client opening far more connections than any real
+		// rclone session profile needs).
+		if atomic.LoadInt64(&activeTunnelSessions) >= maxTunnelSessions {
+			logf("REFUSING tunnel connection from %s: max concurrent sessions (%d) reached", tunnelConn.RemoteAddr(), maxTunnelSessions)
+			tunnelConn.Close()
+			continue
+		}
+
 		sessionN++
 		n := sessionN
 		logf("tunnel connection #%d from %s", n, tunnelConn.RemoteAddr())
@@ -836,9 +916,11 @@ func doTunnelListen(port, keystr string, opts options, childArgs []string) {
 			continue
 		}
 
+		atomic.AddInt64(&activeTunnelSessions, 1)
 		wg.Add(1)
 		go func(lc, tc net.Conn, num int) {
 			defer wg.Done()
+			defer atomic.AddInt64(&activeTunnelSessions, -1)
 			if perr := proxyDuplex(lc, tc); perr != nil {
 				logf("proxy error (session #%d): %v", num, perr)
 			}
@@ -873,6 +955,10 @@ func doTunnelSend(host, port, keystr string, opts options, childArgs []string) {
 		fatalf("cipher init: %v", err)
 	}
 	currentGCM = gcm
+
+	if opts.rateHz > 0 || opts.progress {
+		logf("WARNING: --rate and --progress are not supported in tunnel mode and will be ignored")
+	}
 
 	ln, err := net.Listen("tcp", opts.local)
 	if err != nil {
