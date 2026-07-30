@@ -198,6 +198,35 @@ placement is only needed to seed the admin host itself with a new version.
 
 See `.github/workflows/cs-stream.info` for full documentation.
 
+## Standalone setup without napp-it csweb-gui
+
+cs-stream is a self-contained, single-file Go binary with no dependency
+on a napp-it CS installation at all -- unlike its sibling
+[cs-sync](https://github.com/guenther-alka/cs-sync) (which has one
+opt-in `--service-id` exception writing to a fixed `/opt` path),
+cs-stream's `main.go` has no `/opt` or napp-it reference whatsoever. It
+is a generic encrypted stream transport: `listen`/`send` pipe stdin to
+stdout like an encrypted netcat, `tunnel-listen`/`tunnel-send` wrap an
+arbitrary local TCP service (e.g. rclone's SFTP server). Everything is
+driven by CLI flags and the session key you supply.
+
+Build and run standalone:
+
+```bash
+git clone https://github.com/guenther-alka/cs-stream.git
+cd cs-stream
+go build -o cs-stream .
+
+# receiver:
+cs-stream listen 9000 SESSIONKEY --allow-ip=192.168.1.20 > out.bin
+# sender:
+cs-stream send 192.168.1.10 9000 SESSIONKEY < in.bin
+```
+
+No config file, registry entry, or napp-it environment is expected --
+only a matching session key on both ends and, as of v2.1.0,
+`--allow-ip` on the receiving side.
+
 ## Warranty
 
 napp-it cs-sync/stream is open source. You may use, analyze, or modify
