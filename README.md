@@ -198,13 +198,12 @@ placement is only needed to seed the admin host itself with a new version.
 
 See `.github/workflows/cs-stream.info` for full documentation.
 
-## Gewährleistung
+## Warranty
 
-napp-it cs-sync/stream ist OpenSource. Sie dürfen es kostenlos nutzen,
-analysieren oder verändern. Sie nutzen es "as is" und tragen die
-alleinige Verantwortung für die Nutzung. Diese Hinweise ersetzen nicht
-die BSD 2-Clause Lizenzbedingungen unten, sondern fassen sie in
-verständlicher Form zusammen.
+napp-it cs-sync/stream is open source. You may use, analyze, or modify
+it free of charge. You use it "as is" and bear sole responsibility for
+its use. This note does not replace the BSD 2-Clause license terms
+below -- it summarizes them in plain language.
 
 ## License
 
