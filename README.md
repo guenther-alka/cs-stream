@@ -227,6 +227,11 @@ No config file, registry entry, or napp-it environment is expected --
 only a matching session key on both ends and, as of v2.1.0,
 `--allow-ip` on the receiving side.
 
+**Start order matters:** always start the receiver (`listen` /
+`tunnel-listen`) first, then the sender (`send` / `tunnel-send`). The
+receiver opens the port and waits (up to the accept timeout); a sender
+with nothing listening on the other end simply fails to connect.
+
 ## Warranty
 
 napp-it cs-sync/stream is open source. You may use, analyze, or modify
