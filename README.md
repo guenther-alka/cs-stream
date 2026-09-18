@@ -6,10 +6,6 @@ Encrypted TCP stream transport for ZFS replication. Replaces ssh, mbuffer, netca
 
 Part of [napp-it cs web-gui](https://www.napp-it.org) -- used by job-replicate and job-filesync for encrypted ZFS replication and rclone-over-SFTP folder sync between members.
 
-Renamed from "zstream" as of v2.0.0 (avoids clashing with the unrelated
-OpenZFS tool of the same name) -- functionally identical to zstream v1.3.3,
-same wire protocol and CLI.
-
 ## Status
 
 **v2.1.0.** `listen`/`send` (ZFS replication) and `tunnel-listen`/`tunnel-send`
