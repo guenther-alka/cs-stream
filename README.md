@@ -1,10 +1,13 @@
 # cs-stream
+Encrypted TCP stream transport for ZFS replication. Replaces ssh, mbuffer, netcat (nc) and pv in ZFS send/receive pipelines.
+-- used by job-replicate and job-filesync for encrypted ZFS replication and rclone-over-SFTP folder sync between members.
+
 Signed-off-by: Guenther Alka gea@napp-it.org<br>
 Concept Co-Authored-By: Claude Fable 5 noreply@anthropic.com<br>
 
-Encrypted TCP stream transport for ZFS replication. Replaces ssh, mbuffer, netcat (nc) and pv in ZFS send/receive pipelines.
-
-Part of [napp-it cs web-gui](https://www.napp-it.org) -- used by job-replicate and job-filesync for encrypted ZFS replication and rclone-over-SFTP folder sync between members.
+Part of the [napp-it 4ai (client-server edition)](https://napp-it.org) cluster tooling family
+(alongside [cs-tools](https://www.napp-it.org/cs-tools_en.html))
+csweb-gui deploys and updates this manually per member menu About > Download cs-tools
 
 ## Status
 
