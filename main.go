@@ -73,7 +73,7 @@ import (
 )
 
 // version is set via -ldflags "-X main.version=..." at build time
-var version = "2.1.0"
+var version = "2.1.1"
 
 const (
 	chunkSize      = 65536 // 64 KB plaintext per chunk
